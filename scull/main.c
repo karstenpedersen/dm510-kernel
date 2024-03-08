@@ -612,7 +612,7 @@ void scull_cleanup_module(void)
 static void scull_setup_cdev(struct scull_dev *dev, int index)
 {
 	int err, devno = MKDEV(scull_major, scull_minor + index);
-    
+
 	cdev_init(&dev->cdev, &scull_fops);
 	dev->cdev.owner = THIS_MODULE;
 	dev->cdev.ops = &scull_fops;

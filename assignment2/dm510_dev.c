@@ -1,124 +1,195 @@
-/* Prototype module for second mandatory DM510 assignment */
+/*
+ * dm510_dev.c - DM510 Linux Kernel Module
+ */
 #ifndef __KERNEL__
-#  define __KERNEL__
+#define __KERNEL__
 #endif
 #ifndef MODULE
-#  define MODULE
+#define MODULE
 #endif
 
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/slab.h>	
-#include <linux/kernel.h>
-#include <linux/fs.h>
 #include <linux/errno.h>
+#include <linux/fs.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/wait.h>
-/* #include <asm/uaccess.h> */
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/semaphore.h>
-/* #include <asm/system.h> */
+#include <linux/string.h>
+#include <linux/uaccess.h>
+#include <asm/system.h>
 #include <asm/switch_to.h>
-/* Prototypes - this would normally go in a .h file */
-static int dm510_open( struct inode*, struct file* );
-static int dm510_release( struct inode*, struct file* );
-static ssize_t dm510_read( struct file*, char*, size_t, loff_t* );
-static ssize_t dm510_write( struct file*, const char*, size_t, loff_t* );
-long dm510_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+#include <linux/rwsem.h>
+#include "dm510.h"
 
-#define DEVICE_NAME "dm510_dev" /* Dev name as it appears in /proc/devices */
-#define MAJOR_NUMBER 255
-#define MIN_MINOR_NUMBER 0
-#define MAX_MINOR_NUMBER 1
+// Module info
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("...Karsten F. Pedersen.");
+MODULE_DESCRIPTION("DM510 Driver");
 
-#define DEVICE_COUNT 2
-/* end of what really should have been in a .h file */
+// Module variables
+// static dev_t dev;
+char *device_name = DEVICE_NAME;
+int major = MAJOR;
+int minor = MINOR;
+int nr_devs = NR_DEVS;
 
-/* file operations struct */
-static struct file_operations dm510_fops = {
-	.owner   = THIS_MODULE,
-	.read    = dm510_read,
-	.write   = dm510_write,
-	.open    = dm510_open,
-	.release = dm510_release,
-        .unlocked_ioctl   = dm510_ioctl
+// __initdata
+
+static struct dm510_dev *devices;
+
+static struct file_operations fops = {
+  .owner          = THIS_MODULE,
+  .read           = dm510_read,
+  .write          = dm510_write,
+  .open           = dm510_open,
+  .release        = dm510_release,
+  .unlocked_ioctl = dm510_ioctl
 };
 
-/* called when module is loaded */
-int dm510_init_module( void ) {
+static int __init dm510_init_module(void) {
+  // Register range of device numbers
+  int result;
+  dev_t dev = 0;
+  if (major) {
+    dev = MKDEV(major, minor);
+    result = register_chrdev_region(dev, nr_devs, device_name);
+  } else {
+    result = alloc_chrdev_region(&dev, minor, nr_devs, device_name);
+    major = MAJOR(dev);
+  }
+  if (result < 0) {
+    pr_warn("Unable to get dm510 region, error %d\n", result);
+    return result;
+  }
+  dev = MKDEV(major, minor + nr_devs);
 
-	/* initialization code belongs here */
+  // Setup devices
+  devices = kmalloc(sizeof(struct dm510_dev) * nr_devices, GFP_KERNEL);
+  if (devices == NULL) {
+    pr_err("DM510: Failed to init module, cleaning...!\n");
+    dm510_cleanup_module();
+    return -NOMEM;
+  }
+  memset(devices, 0, nr_devs * sizeof(struct dm510_dev));
 
-	printk(KERN_INFO "DM510: Hello from your device!\n");
-	return 0;
+  // Initialize individual devices
+  for (int i = 0; i < nr_devs; i++) {
+    struct dm510_dev *device = &devices[i];
+    device->
+    // Setup semaphore
+    // Should be setup before dm510_setup_cdev
+    // sema_init(&dev->sem, 1);
+    init_rwsem(&device->sem);
+    // deprecated: DECLARE_MUTEX(&dev->sem);
+    dm510_setup_cdev(device, i);
+  }
+
+  pr_info("DM510: Hello from your device!\n");
+  return SUCCESS;
 }
 
-/* Called when module is unloaded */
-void dm510_cleanup_module( void ) {
+static void __exit dm510_cleanup_module(void) {
+  // dev_t dev = MKDEV(major, MIN_MINOR_NUMBER);
+  // int result = unregister_chrdev_region(dev, NR_DEVS);
+  // if (reslt < 0) {
+  //   pr_alert("Failed to unregister: %d!", result);
+  // }
 
-	/* clean up code belongs here */
-
-	printk(KERN_INFO "DM510: Module unloaded.\n");
+  printk(KERN_INFO "DM510: Module unloaded.\n");
 }
-
 
 /* Called when a process tries to open the device file */
-static int dm510_open( struct inode *inode, struct file *filp ) {
-	
-	/* device claiming code belongs here */
+static int dm510_open(struct inode *inode, struct file *filp) {
+  struct dm510_dev *dev;
 
-	return 0;
+  // container_of is an macro
+  dev = container_of(inode->i_cdev, struct dm510_dev, cdev);
+  filp->private_data = dev; // Easier access in the future
+
+  if ((filp->f_flags & O_ACCMODE) == O_WRONLY) {
+    // scull_trim(dev);
+  }
+
+  return SUCCESS;
+  // TODO: Check filp->f_mode for FMODE_READ and FMODE_WRITE
+  // Get major and minor from inode
+  // unsigned int imajor = imajor(inode);
+  // unsigned int iminor = iminor(inode);
+  // Dont't use i_rdev directly
+  // if (iminor < minor || iminor >= nr_devs) {
+  //   return -1;
+  // } else if (devices[iminor] == 0) {
+  //   return -1;
+  // }
 }
-
 
 /* Called when a process closes the device file. */
-static int dm510_release( struct inode *inode, struct file *filp ) {
-
-	/* device release code belongs here */
-		
-	return 0;
+static int dm510_release(struct inode *inode, struct file *filp) {
+  /* device release code belongs here */
+ // Scull does not have any code here
+  return SUCCESS;
 }
 
+/* Called when a process, which already opened the dev file, attempts to read
+ * from it. */
+static ssize_t dm510_read(struct file *filp, char __user *buffer, size_t count, loff_t *offp) {
+  // CHECK IF BINARY SEMAPHORE FOR READING IS BEING USED
 
-/* Called when a process, which already opened the dev file, attempts to read from it. */
-static ssize_t dm510_read( struct file *filp,
-    char *buf,      /* The buffer to fill with data     */
-    size_t count,   /* The max number of bytes to read  */
-    loff_t *f_pos )  /* The offset in the file           */
-{
-	
-	/* read code belongs here */
-	
-	return 0; //return number of bytes read
+  struct dm510_dev *dev = filp->private_data;
+
+  if (down_read(&dev->sem) != 0) {
+    return -1; // TODO: Find error code
+  }
+  int bytes_read = 0;
+  // copy_to_user(buffer, ??, count);
+  
+
+
+  up_read(&dev->sem);
+  return bytes_read;
 }
-
 
 /* Called when a process writes to dev file */
-static ssize_t dm510_write( struct file *filp,
-    const char *buf,/* The buffer to get data from      */
-    size_t count,   /* The max number of bytes to write */
-    loff_t *f_pos )  /* The offset in the file           */
-{
+static ssize_t dm510_write(struct file *filp,
+                           const char __user *buffer, /* The buffer to get data from */
+                           size_t count,  /* The max number of bytes to write */
+                           loff_t *offp) /* The offset in the file           */
+  // Get device from file pointer
+  struct dm510_dev *dev = filp->private_data;
 
-	/* write code belongs here */	
-	
-	return 0; //return number of bytes written
+  // BINARY SEMAPHORE: WAIT
+  if (down_write(&dev->sem) != 0) {
+    return -ERESTARTSYS; // IDK
+  }
+
+  /* write code belongs here */
+  // critical section
+  // int result = copy_from_user(??, buffer, count);
+  // if (result < 0) {
+  //   return -EFAULT;
+  // }
+
+  up_write(&dev->sem);
+  return 0; // return number of bytes written
 }
 
-/* called by system call icotl */ 
-long dm510_ioctl( 
-    struct file *filp, 
-    unsigned int cmd,   /* command passed from the user */
-    unsigned long arg ) /* argument of the command */
+/* called by system call icotl */
+long dm510_ioctl(struct file *filp,
+                 unsigned int cmd,  /* command passed from the user */
+                 unsigned long arg) /* argument of the command */
 {
-	/* ioctl code belongs here */
-	printk(KERN_INFO "DM510: ioctl called.\n");
+  // Check command
 
-	return 0; //has to be changed
+  // TODO: Check filp->f_mode for FMODE_READ and FMODE_WRITE
+  /* ioctl code belongs here */
+  printk(KERN_INFO "DM510: ioctl called.\n");
+
+  return 0; // has to be changed
 }
 
-module_init( dm510_init_module );
-module_exit( dm510_cleanup_module );
-
-MODULE_AUTHOR( "...Your names here. Do not delete the three dots in the beginning." );
-MODULE_LICENSE( "GPL" );
+module_init(dm510_init_module);
+module_exit(dm510_cleanup_module);
